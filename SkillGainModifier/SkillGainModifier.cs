@@ -1,10 +1,12 @@
 ﻿using BepInEx;
+using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
+using System.Collections.Generic;
 using System.Reflection;
-using UnityEngine;
+using SkillType = Skills.SkillType;
 
-namespace MyBepInExPlugin
+namespace SkillGainModifier
 {
     [BepInPlugin(pluginGUID, pluginName, pluginVersion)]
     public class SkillGainModifier : BaseUnityPlugin
@@ -17,165 +19,185 @@ namespace MyBepInExPlugin
 
         private readonly static ManualLogSource logger = BepInEx.Logging.Logger.CreateLogSource(pluginName);
 
+        // To hold skill progress
+        private static Dictionary<SkillType, float> skillData = new Dictionary<SkillType, float>();
+
+        // Configs
+
+        private static ConfigEntry<bool> loggingEnabled;
+
+        private static ConfigEntry<bool> noSkillDrainEnabled;
+
         public void Awake()
         {
+            loggingEnabled = Config.Bind<bool>("Logging", "Logging Enabled", true, "Enable logging");
+
+            noSkillDrainEnabled = Config.Bind<bool>("No skill drain", "No skill drain enabled", true, "Enable no skill drain. The default length for it is 10 minutes, and its too big of a hassle to modify to work correctly. So here is a feature to enable or disable it :)");
+
+            // Other user supplied values
+
             Assembly assembly = Assembly.GetExecutingAssembly();
             harmonyInstance.PatchAll(assembly);
         }
 
+        private static void LogInfo(string message)
+        {
+            if (loggingEnabled.Value)
+            {
+                logger.LogInfo(message);
+            }
+        }
+
+        // Logging wrappers for the BepInEx logging system
+        // NOTE: LogDebug is by default not captured, one has to enable it via BepInEx/config/BepInEx.cfg
+        private static void LogDebug(string message)
+        {
+            if (loggingEnabled.Value)
+            {
+                logger.LogDebug(message);
+            }
+        }
+
+        private static void LogError(string message)
+        {
+            if (loggingEnabled.Value)
+            {
+                logger.LogDebug(message);
+            }
+        }
+
+        /// Patches ///
+
         /// Raising skills ///
 
-        // In player class
-        //public override void RaiseSkill(Skills.SkillType skill, float value = 1f)
-        //{
-        //    if (skill != Skills.SkillType.None)
-        //    {
-        //        float multiplier = 1f;
-        //        m_seman.ModifyRaiseSkill(skill, ref multiplier);
-        //        value *= multiplier;
-        //        m_skills.RaiseSkill(skill, value);
-        //    }
-        //}
-
-        //public void RaiseSkill(SkillType skillType, float factor = 1f)
-        //{
-        //    if (skillType == SkillType.None)
-        //    {
-        //        return;
-        //    }
-
-        //    Skill skill = GetSkill(skillType);
-        //    float level = skill.m_level;
-        //    if (skill.Raise(factor))
-        //    {
-        //        if (m_useSkillCap)
-        //        {
-        //            RebalanceSkills(skillType);
-        //        }
-
-        //        m_player.OnSkillLevelup(skillType, skill.m_level);
-        //        MessageHud.MessageType type = (((int)level != 0) ? MessageHud.MessageType.TopLeft : MessageHud.MessageType.Center);
-        //        m_player.Message(type, "$msg_skillup $skill_" + skill.m_info.m_skill.ToString().ToLower() + ": " + (int)skill.m_level, 0, skill.m_info.m_icon);
-        //        Gogan.LogEvent("Game", "Levelup", skillType.ToString(), (int)skill.m_level);
-        //    }
-        //}
-
-        /// What gets called ///
-
-        // In Skills class
-        //public bool Raise(float factor)
-        //{
-        //    if (m_level >= 100f)
-        //    {
-        //        return false;
-        //    }
-
-        //    float num = m_info.m_increseStep * factor * Game.m_skillGainRate;
-        //    m_accumulator += num;
-        //    float nextLevelRequirement = GetNextLevelRequirement();
-        //    if (m_accumulator >= nextLevelRequirement)
-        //    {
-        //        m_level += 1f;
-        //        m_level = Mathf.Clamp(m_level, 0f, 100f);
-        //        m_accumulator = 0f;
-        //        return true;
-        //    }
-
-        //    return false;
-        //}
-
-        [HarmonyPatch(typeof(Player), nameof(Player.RaiseSkill))]
-        public static class Patch_Player_RaiseSkill
+        [HarmonyPatch(typeof(Skills), nameof(Skills.RaiseSkill))]
+        public static class Patch_Skills_RaiseSkill
         {
-            private static void Prefix(Skills.SkillType skill, ref float value)
+            private static void Prefix(SkillType skillType, ref float factor)
             {
-                // Figure out a way to get current skill levels
+                // Per-skill modifiers
 
-                logger.LogDebug($"Skill: {skill}");
-                float oldValue = value;
-                logger.LogDebug($"Value before: {oldValue}");
-
+                LogDebug($"{skillType} gain before: {factor}");
                 // User supplied value
-                value *= 2.5f; // 2.5 times increase
-                logger.LogDebug($"Value after: {value}");
+                factor *= 2.5f; // 2.5 times increase
+                LogDebug($"After: {factor}");
             }
 
             private static void Postfix()
             {
-                // Print the skills to debug
+                // Print the skills to debug??
                 // Or the skill raised, its value before and after
-                // Also how much it should have been normally raised vs modified
-                //logger.LogDebug($"RaiseSkill Postfix");
+                // Also how much it should have been normally raised vs modified?
+                //LogDebug($"RaiseSkill Postfix");
+            }
+        }
+
+        // Can be used to print something continouosly for debugging
+        [HarmonyPatch(typeof(Player), nameof(Player.UseStamina))]
+        public static class Patch_Player_UseStamina
+        {
+            private static void Prefix(Player __instance)
+            {
+                // LogDebug...
+            }
+        }
+
+        // No skill drain status effect was too much of a hassle to get working
+        // The system is really not made for easy modifying at runtime
+
+        // TLDR: Look at StatusEffect and SEMan
+        // cloning StatusEffects and a too complex system for applying effects and removing them
+        // Also the player has m_DeathCooldown but effects have m_ttl, spaghetti.. code...
+        // Also I realized one can modify the difficulty of the game via the world modifiers
+
+        // Decided to just add a bool to enable or disable no skill drain
+        [HarmonyPatch(typeof(Player), nameof(Player.UpdateStats), typeof(float))]
+        public static class Patch_Player_UpdateStats
+        {
+            private static void Postfix(Player __instance)
+            {
+                if (!noSkillDrainEnabled.Value)
+                {
+                    // Normally: m_timeSinceDeath += dt;
+                    // Here we just HardDeath() to return true instantly
+                    __instance.m_timeSinceDeath = 999999f; // Same as the default in the game
+                }
             }
         }
 
         /// On death skill reduction ///
-
-        // class Skills
-        // m_skills.OnDeath
-
-        //public void OnDeath()
-        //{
-        //    LowerAllSkills(m_DeathLowerFactor * Game.m_skillReductionRate);
-        //}
-
-        // Default values for: m_DeathLowerFactor * Game.m_skillReductionRate
-        // m_DeathLowerFactor = 0.25f, Game.m_skillReductionRate = 1.0f
-        // so factor is 1.25f
-
-        //public void LowerAllSkills(float factor)
-        //{
-        //    foreach (KeyValuePair<SkillType, Skill> skillDatum in m_skillData)
-        //    {
-        //        float num = skillDatum.Value.m_level * factor;
-        //        skillDatum.Value.m_level -= num;
-        //        skillDatum.Value.m_accumulator = 0f;
-        //    }
-
-        //    m_player.Message(MessageHud.MessageType.TopLeft, "$msg_skills_lowered");
-        //}
 
         [HarmonyPatch(typeof(Skills), nameof(Skills.LowerAllSkills))]
         public static class Patch_Skills_LowerAllSkills
         {
             private static void Prefix(Skills __instance, ref float factor)
             {
-                // Get the skill data before modifying
-
-                logger.LogDebug($"Game m_skillReductionRate: {Game.m_skillReductionRate}");
-                logger.LogDebug($"Skills m_skillReductionRate: {__instance.m_DeathLowerFactor}");
-                logger.LogDebug($"Factor before modifying: {factor}");
+                LogDebug($"Game m_skillReductionRate: {Game.m_skillReductionRate}");
+                LogDebug($"Skills m_skillReductionRate: {__instance.m_DeathLowerFactor}\n");
+                LogDebug($"Factor before modifying: {factor}");
                 // By setting the value explicitly here we allow full control of the skill drain rate
                 factor = 0.0f;
-                logger.LogDebug($"Factor after modifying: {factor}");
-
-                // No skill level lost, but progess is
-
-                //var skillsData = __instance.m_skillData;
+                LogDebug($"Factor after modifying: {factor}\n");
 
                 // Save all skill progress in here and apply in postfix
                 // to avoid losing any progress via m_accumulator = 0
+                // being done in LowerAllSkills
+
+                LogInfo($"Saving skill progress...\n");
+                foreach (var kv in __instance.m_skillData)
+                {
+                    skillData.Add(kv.Key, kv.Value.m_accumulator);
+                    LogDebug($"Added {kv.Key}, {kv.Value.m_accumulator}");
+                }
+            }
+
+            // Modify progress back to saved
+            private static void Postfix(Skills __instance)
+            {
+                LogDebug("Skill progress before applying saved:\n");
+                foreach (var kv in __instance.m_skillData)
+                {
+                    LogDebug($"{kv.Key}: {kv.Value.m_accumulator}");
+                }
+
+                if (skillData.Count > 0)
+                {
+                    LogInfo($"Applying saved skill progress...\n");
+                    foreach (var kv in __instance.m_skillData)
+                    {
+                        float accumulated = 0.0f; // TryGetValue would return this nonetheless, but to be extra safe
+                        bool foundValueBySkill = skillData.TryGetValue(kv.Key, out accumulated);
+                        if (!foundValueBySkill)
+                        {
+                            LogError($"Couldn't find value by key {kv.Key}. Setting value to default (0.0f)");
+                        }
+                        else
+                        {
+                            LogDebug($"Found {kv.Key}, setting value to {accumulated}");
+                        }
+
+                        __instance.m_skillData[kv.Key].m_accumulator = accumulated;
+                    }
+
+                    // Has to be called in order to add values in Prefix
+                    skillData.Clear();
+                }
             }
         }
 
-        // Postfix modify progress back to normal!
+        /// Corpse run ///
 
-
-
-        // Modifying no skill drain and corpse run
-
-        //[HarmonyPatch(typeof(TombStone), nameof(TombStone.GiveBoost))]
         [HarmonyPatch(typeof(TombStone), nameof(TombStone.Awake))]
         public static class Patch_TombStone_Awake
         {
             private static void Postfix(TombStone __instance)
             {
                 StatusEffect se = __instance.m_lootStatusEffect;
-                logger.LogDebug($"Effect: {se}"); // Effect: CorpseRun (SE_Stats)
-                logger.LogDebug($"ttl: {se.m_ttl}"); // ttl: 50 (default)
+                LogDebug($"Effect: {se}"); // Effect: CorpseRun (SE_Stats)
+                LogDebug($"ttl: {se.m_ttl}"); // ttl: 50 (default)
 
                 se.m_ttl = 5.0f; // User supplied value
-                logger.LogDebug($"Set {se} ttl to: {se.m_ttl}");
+                LogDebug($"Set {se} ttl to: {se.m_ttl}");
             }
         }
     }
