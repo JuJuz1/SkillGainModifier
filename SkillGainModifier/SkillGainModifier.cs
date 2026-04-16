@@ -2,6 +2,7 @@
 using BepInEx.Logging;
 using HarmonyLib;
 using System.Reflection;
+using UnityEngine;
 
 namespace MyBepInExPlugin
 {
@@ -22,37 +23,7 @@ namespace MyBepInExPlugin
             harmonyInstance.PatchAll(assembly);
         }
 
-        [HarmonyPatch(typeof(Player), nameof(Player.UseStamina))]
-        public static class Patch_Player_UseStamina
-        {
-            private static bool Prefix()
-            {
-                //logger.LogDebug("Prefixed Player.UseStamina");
-                return false;
-            }
-        }
-
-        [HarmonyPatch(typeof(Player), nameof(Player.RaiseSkill))]
-        public static class Patch_Player_RaiseSkill
-        {
-            private static void Prefix(Skills.SkillType skill, ref float value)
-            {
-                // Figure out a way to get current skill levels
-                //AccessTools.Method(typeof(Player), )
-                logger.LogDebug($"Skill: {skill}");
-                logger.LogDebug($"Value before: {value}");
-                value *= 1.5f; // 50% increase
-                logger.LogDebug($"Value after: {value}");
-            }
-
-            private static void Postfix()
-            {
-                // Print the skills to debug
-                // Or the skill raised, its value before and after
-                // Also how much it should have been normally raised vs modified
-                logger.LogDebug($"RaiseSkill Postfix");
-            }
-        }
+        /// Raising skills ///
 
         // In player class
         //public override void RaiseSkill(Skills.SkillType skill, float value = 1f)
@@ -112,5 +83,100 @@ namespace MyBepInExPlugin
 
         //    return false;
         //}
+
+        [HarmonyPatch(typeof(Player), nameof(Player.RaiseSkill))]
+        public static class Patch_Player_RaiseSkill
+        {
+            private static void Prefix(Skills.SkillType skill, ref float value)
+            {
+                // Figure out a way to get current skill levels
+
+                logger.LogDebug($"Skill: {skill}");
+                float oldValue = value;
+                logger.LogDebug($"Value before: {oldValue}");
+
+                // User supplied value
+                value *= 2.5f; // 2.5 times increase
+                logger.LogDebug($"Value after: {value}");
+            }
+
+            private static void Postfix()
+            {
+                // Print the skills to debug
+                // Or the skill raised, its value before and after
+                // Also how much it should have been normally raised vs modified
+                //logger.LogDebug($"RaiseSkill Postfix");
+            }
+        }
+
+        /// On death skill reduction ///
+
+        // class Skills
+        // m_skills.OnDeath
+
+        //public void OnDeath()
+        //{
+        //    LowerAllSkills(m_DeathLowerFactor * Game.m_skillReductionRate);
+        //}
+
+        // Default values for: m_DeathLowerFactor * Game.m_skillReductionRate
+        // m_DeathLowerFactor = 0.25f, Game.m_skillReductionRate = 1.0f
+        // so factor is 1.25f
+
+        //public void LowerAllSkills(float factor)
+        //{
+        //    foreach (KeyValuePair<SkillType, Skill> skillDatum in m_skillData)
+        //    {
+        //        float num = skillDatum.Value.m_level * factor;
+        //        skillDatum.Value.m_level -= num;
+        //        skillDatum.Value.m_accumulator = 0f;
+        //    }
+
+        //    m_player.Message(MessageHud.MessageType.TopLeft, "$msg_skills_lowered");
+        //}
+
+        [HarmonyPatch(typeof(Skills), nameof(Skills.LowerAllSkills))]
+        public static class Patch_Skills_LowerAllSkills
+        {
+            private static void Prefix(Skills __instance, ref float factor)
+            {
+                // Get the skill data before modifying
+
+                logger.LogDebug($"Game m_skillReductionRate: {Game.m_skillReductionRate}");
+                logger.LogDebug($"Skills m_skillReductionRate: {__instance.m_DeathLowerFactor}");
+                logger.LogDebug($"Factor before modifying: {factor}");
+                // By setting the value explicitly here we allow full control of the skill drain rate
+                factor = 0.0f;
+                logger.LogDebug($"Factor after modifying: {factor}");
+
+                // No skill level lost, but progess is
+
+                //var skillsData = __instance.m_skillData;
+
+                // Save all skill progress in here and apply in postfix
+                // to avoid losing any progress via m_accumulator = 0
+            }
+        }
+
+        // Postfix modify progress back to normal!
+
+
+
+        // Modifying no skill drain and corpse run
+
+        //[HarmonyPatch(typeof(TombStone), nameof(TombStone.GiveBoost))]
+        [HarmonyPatch(typeof(TombStone), nameof(TombStone.Awake))]
+        public static class Patch_TombStone_Awake
+        {
+            private static void Postfix(TombStone __instance)
+            {
+                StatusEffect se = __instance.m_lootStatusEffect;
+                logger.LogDebug($"Effect: {se}"); // Effect: CorpseRun (SE_Stats)
+                logger.LogDebug($"ttl: {se.m_ttl}"); // ttl: 50 (default)
+
+                se.m_ttl = 5.0f; // User supplied value
+                logger.LogDebug($"Set {se} ttl to: {se.m_ttl}");
+            }
+        }
     }
 }
