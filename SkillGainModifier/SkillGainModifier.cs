@@ -2,7 +2,9 @@
 using BepInEx.Configuration;
 using BepInEx.Logging;
 using HarmonyLib;
+using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Reflection;
 using SkillType = Skills.SkillType;
 
@@ -22,28 +24,37 @@ namespace SkillGainModifier
         // To hold skill progress
         private static Dictionary<SkillType, float> skillData = new Dictionary<SkillType, float>();
 
-        // Configs
+        private static string configFileName = pluginGUID + ".cfg";
+        private static string configFileFullPath = BepInEx.Paths.ConfigPath + Path.DirectorySeparatorChar + configFileName;
 
-        private static ConfigEntry<float> corpseRunDuration;
+        // Configs
 
         private static ConfigEntry<bool> loggingEnabled;
 
+        private static ConfigEntry<float> corpseRunDuration;
         private static ConfigEntry<bool> noSkillDrainEnabled;
 
         private static Dictionary<SkillType, ConfigEntry<float>> skillGainModifiers = new Dictionary<SkillType, ConfigEntry<float>>();
-        private static ConfigEntry<float> skillReductionModifier; // Having reduction modifiers for all skills in addition to gain modifiers kind of defeats the purpose am I right?
+        // Having reduction modifiers for all skills in addition to gain modifiers kind of defeats the purpose am I right?
+        private static ConfigEntry<float> skillReductionModifier;
+
+        // Config reloading timers
+        private DateTime lastReloadTime;
+        private const long RELOAD_DELAY = 10_000_000; // One second in ticks
 
         public void Awake()
         {
-            loggingEnabled = Config.Bind<bool>("Logging", "Logging Enabled", true, "Enable logging");
+            Config.SaveOnConfigSet = false; // Disable saving when binding each following config
 
-            noSkillDrainEnabled = Config.Bind<bool>("No skill drain", "Enabled", true, "Enable no skill drain. The default length for it is 10 minutes, and its too big of a hassle to modify to work correctly. So here is a feature to enable or disable it :)");
-            corpseRunDuration = Config.Bind<float>("Corpse run duration", "Duration", 60.0f, "Corpse run duration. The default for it is 50 seconds, here we set a default of 60 seconds");
+            loggingEnabled = Config.Bind<bool>("General", "Logging Enabled", true, "Enable logging");
+
+            noSkillDrainEnabled = Config.Bind<bool>("General", "No skill drain enabled", true, "Enable no skill drain. The default length for it is 10 minutes, and its too big of a hassle to modify to work correctly. So here is a feature to enable or disable it :)");
+            corpseRunDuration = Config.Bind<float>("General", "Duration", 60.0f, "Corpse run duration. The default for it is 50 seconds, here we set a default of 60 seconds");
 
             var all = SkillType.All;
             skillGainModifiers[all] = Config.Bind(
                 "Skill Gain",
-                all.ToString(),
+                "Global",
                 2.5f,
                 "Multiplier for all XP gain. A factor of 2.5x is a solid default value. I mean who in the hell is reaching level 100 in any playthrough with the default of 1x?"
             );
@@ -59,15 +70,72 @@ namespace SkillGainModifier
                     "Skill Gain",
                     skill.ToString(),
                     0.0f,
-                    $"Multiplier for {skill} XP gain. Overrides all XP gain modifier if other than 0!"
+                    ""
+                //"$"Multiplier for {skill} XP gain. Overrides all XP gain modifier if other than 0!"
                 );
             }
 
             skillReductionModifier = Config.Bind<float>("Skill reduction", "Modifier", 0.0f, "A multiplier for skill reduction. The default value of 0 means the skill level AND progress is not affected at all. Any value other than 0 resets skill progress! A value of 1 signals to use the game's default world modifiers");
 
+            Config.Save();
+            Config.SaveOnConfigSet = true; // Re-enable saving on config changes
+
+            SetupWatcher();
+
             Assembly assembly = Assembly.GetExecutingAssembly();
             harmonyInstance.PatchAll(assembly);
         }
+
+        private void OnDestroy()
+        {
+            Config.Save();
+        }
+
+        // Config hot reloading
+        private void SetupWatcher()
+        {
+            FileSystemWatcher watcher = new FileSystemWatcher(BepInEx.Paths.ConfigPath, configFileName);
+            watcher.Changed += ReadConfigValues;
+            watcher.Created += ReadConfigValues;
+            watcher.Renamed += ReadConfigValues;
+            watcher.IncludeSubdirectories = true;
+            watcher.SynchronizingObject = ThreadingHelper.SynchronizingObject;
+            watcher.EnableRaisingEvents = true;
+        }
+
+        private void ReadConfigValues(object sender, FileSystemEventArgs e)
+        {
+            var now = DateTime.Now;
+            var time = now.Ticks - lastReloadTime.Ticks;
+
+            if (!File.Exists(configFileFullPath))
+            {
+                LogError($"Config doesn't exist, check {configFileFullPath}");
+                return;
+            }
+
+            if (time < RELOAD_DELAY)
+            {
+                LogDebug($"Attempting new reload in {(float)(RELOAD_DELAY - time) / (float)(RELOAD_DELAY)}s");
+                return;
+            }
+
+            lastReloadTime = now;
+
+            try
+            {
+                LogInfo("Attempting to reload configuration...");
+                Config.Reload();
+            }
+            catch
+            {
+                LogError($"There was an issue loading {configFileName}");
+            }
+
+            LogInfo("Reloaded configuration!");
+        }
+
+        // Logging wrappers for the BepInEx logging system
 
         private static void LogInfo(string message)
         {
@@ -77,8 +145,7 @@ namespace SkillGainModifier
             }
         }
 
-        // Logging wrappers for the BepInEx logging system
-        // NOTE: LogDebug is by default not captured, one has to enable it via BepInEx/config/BepInEx.cfg
+        // NOTE: By default, LogDebug is not captured, one has to enable it via BepInEx/config/BepInEx.cfg
         private static void LogDebug(string message)
         {
             if (loggingEnabled.Value)
@@ -91,7 +158,7 @@ namespace SkillGainModifier
         {
             if (loggingEnabled.Value)
             {
-                logger.LogDebug(message);
+                logger.LogError(message);
             }
         }
 
@@ -104,9 +171,7 @@ namespace SkillGainModifier
         {
             private static void Prefix(SkillType skillType, ref float factor)
             {
-                // Per-skill modifiers
                 ConfigEntry<float> entry;
-                // TODO: allow non-exisiting values via other file type like yml
                 bool found = skillGainModifiers.TryGetValue(skillType, out entry);
                 if (!found)
                 {
@@ -115,14 +180,16 @@ namespace SkillGainModifier
                 }
 
                 LogDebug($"{skillType} gain before: {factor}");
+                // Default value of 0 means use global
                 if (entry.Value == 0.0f)
                 {
-                    LogDebug($"Using global value!");
-                    factor *= skillGainModifiers[SkillType.All].Value;
+                    float globalFactor = skillGainModifiers[SkillType.All].Value;
+                    LogDebug($"Using global value: {globalFactor}");
+                    factor *= globalFactor;
                 }
                 else
                 {
-                    LogDebug($"Using overriden value!");
+                    LogDebug($"Using overriden value {entry.Value}");
                     factor *= entry.Value;
                 }
 
@@ -163,9 +230,8 @@ namespace SkillGainModifier
                 {
                     LogDebug("No skill reduction!");
 
-                    // Save all skill progress in here and apply in postfix
-                    // to avoid losing any progress via m_accumulator = 0
-                    // being done in LowerAllSkills
+                    // Save all skill levels and progress here and apply in postfix
+                    // to avoid losing any progress via m_accumulator = 0 being done
 
                     LogInfo($"Saving skill progress...\n");
                     foreach (var kv in __instance.m_skillData)
