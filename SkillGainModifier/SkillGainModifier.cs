@@ -8,19 +8,19 @@ using System.IO;
 using System.Reflection;
 using SkillType = Skills.SkillType;
 
-// A class to hold the current level and progress of the Skill
-class SkillData
-{
-    public float level;
-    public float progress;
-    public override string ToString()
-    {
-        return $"level: {level}, progress: {progress}";
-    }
-};
-
 namespace SkillGainModifier
 {
+    // A class to hold the current level and progress of the Skill
+    class SkillData
+    {
+        public float level;
+        public float progress;
+        public override string ToString()
+        {
+            return $"level: {level}, progress: {progress}";
+        }
+    };
+
     [BepInPlugin(pluginGUID, pluginName, pluginVersion)]
     public class SkillGainModifier : BaseUnityPlugin
     {
@@ -66,34 +66,31 @@ namespace SkillGainModifier
 
             noSkillDrainEnabled = Config.Bind<bool>("General", "No skill drain enabled", true, "Enable no skill drain. The default length for it is 10 minutes, and its too big of a hassle to modify to work correctly. So here is a feature to enable or disable it :)");
             corpseRunDuration = Config.Bind<float>("General", "Duration", 60.0f, "Corpse run duration. The default for it is 50 seconds, here we set a default of 60 seconds");
-            var das = new SkillData();
-            var b = das.progress;
 
-            var all = SkillType.All;
-            skillGainModifiers[all] = Config.Bind(
+            skillGainModifiers[SkillType.All] = Config.Bind(
                 "Skill Gain",
                 "Global",
                 2.5f,
                 "Multiplier for all XP gain. A factor of 2.5x is a solid default value. I mean who in the hell is reaching level 100 in any playthrough with the default of 1x?"
             );
 
-            foreach (SkillType skill in System.Enum.GetValues(typeof(SkillType)))
+            foreach (SkillType skillType in System.Enum.GetValues(typeof(SkillType)))
             {
-                if (skill == SkillType.None || skill == SkillType.All)
+                if (skillType == SkillType.None || skillType == SkillType.All)
                 {
                     continue;
                 }
 
-                skillGainModifiers[skill] = Config.Bind(
+                skillGainModifiers[skillType] = Config.Bind(
                     "Skill Gain",
-                    skill.ToString(),
+                    skillType.ToString(),
                     0.0f,
                     ""
                 //"$"Multiplier for {skill} XP gain. Overrides all XP gain modifier if other than 0!"
                 );
             }
 
-            skillReductionModifier = Config.Bind<float>("Skill reduction", "Modifier", 0.0f, "A multiplier for skill reduction. RECOMMENDED VALUES: 0-0.2, see later for explanation. The default value of 0 means the skill level AND progress is not affected at all. A value of 1 signals to use the game's default world modifiers. Any value other than 0 resets skill progress! The game does the following when calculating the new level: new level = modifier * current level. Using a value above one will always set the level 0!!! So be careful with too big modifiers. The code checks that the minimum level is capped to 0 for safety");
+            skillReductionModifier = Config.Bind<float>("Skill reduction", "Modifier", 0.0f, "A multiplier for skill reduction when dying. RECOMMENDED VALUES: 0-0.2, see later for explanation. The default value of 0 means the skill level AND progress is not affected at all. A value of 1 signals to use the game's default world modifiers. Any value other than 0 resets skill progress! The game does the following when calculating the new level: new level = modifier * current level. Using a value above one will always set the level 0!!! So be careful with too big modifiers. The code checks that the minimum level is capped to 0 for safety");
 
             Config.Save();
             Config.SaveOnConfigSet = true; // Re-enable saving on config changes
@@ -203,7 +200,8 @@ namespace SkillGainModifier
                 var now = DateTime.Now;
                 var time = now.Ticks - lastReductionWarningTime.Ticks;
 
-                if (time < WARNING_INTERVAL) {
+                if (time < WARNING_INTERVAL)
+                {
                     return;
                 }
 
@@ -241,18 +239,15 @@ namespace SkillGainModifier
                 else
                 {
                     LogDebug($"Using overriden value: {entry.Value}");
+                    if (entry.Value < 0.0f)
+                    {
+                        LogWarning($"{skillType} has a negative modifier of {entry.Value}. This will result in negative xp gain, which will not be shown in the UI beyond the progress bar. Are you sure this is correct? Applying negative xp gain...");
+                    }
+
                     factor *= entry.Value;
                 }
 
                 LogDebug($"After: {factor}\n");
-            }
-
-            private static void Postfix()
-            {
-                // Print the skills to debug??
-                // Or the skill raised, its value before and after
-                // Also how much it should have been normally raised vs modified?
-                //LogDebug($"RaiseSkill Postfix");
             }
         }
 
@@ -284,7 +279,7 @@ namespace SkillGainModifier
                     // Save all skill levels and progress here and apply in postfix
                     // to avoid losing any progress via m_accumulator = 0 being done
 
-                    LogInfo($"Saving skill progress...\n");
+                    LogInfo($"Reduction modifier is 0. Saving skill progress...\n");
                     foreach (var kv in __instance.m_skillData)
                     {
                         var data = new SkillData { level = kv.Value.m_level, progress = kv.Value.m_accumulator };
@@ -334,7 +329,7 @@ namespace SkillGainModifier
                     LogInfo($"Applying saved skill progress...\n");
                     foreach (var kv in __instance.m_skillData)
                     {
-                        var data = new SkillData { level = 0.0f, progress = 0.0f }; // TryGetValue would return this nonetheless, but to be extra safe
+                        var data = new SkillData { level = 0.0f, progress = 0.0f }; // TryGetValue would return zero-initialized nonetheless, but to be extra safe
                         bool foundValueBySkill = skillData.TryGetValue(kv.Key, out data);
                         if (!foundValueBySkill)
                         {
@@ -355,14 +350,14 @@ namespace SkillGainModifier
         }
 
         // Can be used to print something continouosly for debugging
-        [HarmonyPatch(typeof(Player), nameof(Player.UseStamina))]
-        public static class Patch_Player_UseStamina
-        {
-            private static void Prefix(Player __instance)
-            {
-                // LogDebug...
-            }
-        }
+        //[HarmonyPatch(typeof(Player), nameof(Player.UseStamina))]
+        //public static class Patch_Player_UseStamina
+        //{
+        //    private static void Prefix(Player __instance)
+        //    {
+        //        // LogDebug...
+        //    }
+        //}
 
         /// No skill drain ///
 
@@ -375,19 +370,20 @@ namespace SkillGainModifier
         // Also I realized one can modify the difficulty of the game via the world modifiers
 
         // Decided to just add a bool to enable or disable no skill drain
+
+        // This is run every FixedUpdate so we can call this here quite handily
         [HarmonyPatch(typeof(Player), nameof(Player.UpdateStats), typeof(float))]
         public static class Patch_Player_UpdateStats
         {
             private static void Postfix(Player __instance)
             {
-                // This is run every FixedUpdate so we can call this here quite handily
                 WarnAboutReductionModifier();
 
-                if (!noSkillDrainEnabled.Value && __instance.m_timeSinceDeath <= 1000.0f) // Safe margin
+                if (!noSkillDrainEnabled.Value && __instance.m_timeSinceDeath <= 10000.0f) // Safe margin
                 {
                     // Normally: m_timeSinceDeath += dt;
                     // Here we just make HardDeath() return true instantly
-                    LogDebug("timeSinceDeath set to 999999.0f");
+                    LogDebug("No skill drain disabled, timeSinceDeath set to 999999.0f");
                     __instance.m_timeSinceDeath = 999999.0f; // Same as the default in the game
                     // This doesn't remove the icon and the timer from the UI though... but works functionally!
                 }
@@ -403,7 +399,7 @@ namespace SkillGainModifier
             {
                 StatusEffect se = __instance.m_lootStatusEffect;
                 se.m_ttl = corpseRunDuration.Value;
-                LogDebug($"Set {se} ttl to: {se.m_ttl}");
+                LogDebug($"Set {se} ttl (duration) to: {se.m_ttl}");
             }
         }
     }
