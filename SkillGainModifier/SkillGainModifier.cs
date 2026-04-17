@@ -26,7 +26,7 @@ namespace SkillGainModifier
     {
         public const string pluginGUID = "jujuz1.mods.skillgainmodifier";
         public const string pluginName = "SkillGainModifier";
-        public const string pluginVersion = "1.0.0";
+        public const string pluginVersion = "0.1.0";
 
         private readonly Harmony harmonyInstance = new Harmony(pluginGUID);
 
@@ -45,7 +45,7 @@ namespace SkillGainModifier
         private static ConfigEntry<float> corpseRunDuration;
         private static ConfigEntry<bool> noSkillDrainEnabled;
 
-        private static Dictionary<SkillType, ConfigEntry<float>> skillGainModifiers = new Dictionary<SkillType, ConfigEntry<float>>();
+        private static readonly Dictionary<SkillType, ConfigEntry<float>> skillGainModifiers = new Dictionary<SkillType, ConfigEntry<float>>();
         // Having reduction modifiers for all skills in addition to gain modifiers kind of defeats the purpose am I right?
         private static ConfigEntry<float> skillReductionModifier;
 
@@ -189,11 +189,22 @@ namespace SkillGainModifier
 
         private static void WarnAboutReductionModifier(bool atStartup = false)
         {
-            if (skillReductionModifier.Value > 1)
+            bool aboveOne = skillReductionModifier.Value > 1.0f;
+            bool belowZero = skillReductionModifier.Value < 0.0f;
+
+            if (aboveOne || belowZero)
             {
                 if (atStartup)
                 {
-                    LogWarning($"Any modifier above one results in the level being 0! Current modifier {skillReductionModifier.Value}. Recommended values are 0-0.2! The mod will warn you about this every {WARNING_INTERVAL / ONE_SECOND_IN_TICKS}s");
+                    if (aboveOne)
+                    {
+                        LogWarning($"Any reduction modifier above one results in the level being 0 when dying! Current modifier: {skillReductionModifier.Value}. Recommended values are 0-0.2! The mod will warn you about this every {WARNING_INTERVAL / ONE_SECOND_IN_TICKS}s");
+                    }
+                    else if (belowZero)
+                    {
+                        LogWarning($"Any reduction modifier below zero results in the level increasing when dying! Current modifier: {skillReductionModifier.Value}. Recommended values are 0-0.2! The mod will warn you about this every {WARNING_INTERVAL / ONE_SECOND_IN_TICKS}s");
+                    }
+
                     return;
                 }
 
@@ -207,7 +218,14 @@ namespace SkillGainModifier
 
                 lastReductionWarningTime = now;
 
-                LogWarning($"Any modifier above one results in the level being 0! Current modifier {skillReductionModifier.Value}. Recommended values are 0-0.2!");
+                if (aboveOne)
+                {
+                    LogWarning($"Any reduction modifier above one results in the level being 0 when dying! Current modifier: {skillReductionModifier.Value}. Recommended values are 0-0.2!");
+                }
+                else if (belowZero)
+                {
+                    LogWarning($"Any reduction modifier below zero results in the level increasing when dying! Current modifier: {skillReductionModifier.Value}. Recommended values are 0-0.2!");
+                }
             }
         }
 
@@ -288,6 +306,11 @@ namespace SkillGainModifier
                     }
 
                     return;
+                }
+
+                if (skillReductionModifier.Value < 0.0f)
+                {
+                    LogWarning($"Any reduction modifier below zero results in the level increasing when dying! Current modifier: {skillReductionModifier.Value}. Recommended values are 0-0.2! Applying positive xp gain...");
                 }
 
                 factor = skillReductionModifier.Value;
