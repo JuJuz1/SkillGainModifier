@@ -1,0 +1,9 @@
+{
+    "name": "SkillGainModifier",
+    "version_number": "0.1.0",
+    "website_url": "https://github.com/JuJuz1/SkillGainModifier",
+    "description": "Allows modifying experience gain per-skill",
+    "dependencies": [
+        "denikson-BepInExPack_Valheim-5.4.2333"
+    ]
+}

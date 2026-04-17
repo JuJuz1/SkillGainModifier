@@ -427,5 +427,5 @@ FodyWeavers.xsd
 *.msm
 *.msp
 
-# BepInEX stuff
+# Referenced DLLs
 SkillGainModifier/Libraries

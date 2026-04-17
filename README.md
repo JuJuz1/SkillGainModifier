@@ -2,9 +2,10 @@
 
 A Valheim mod which allows modifying experience gain per-skill
 
-You can set a global value to apply a multiplier for all skills but also override the global value per-skill. This is done by assigning any value other than 0 for the skill
+- Global value for all skills
+- Per-skill (override with any value other than 0)
 
-You can also modify the skill reduction modifier which is applied when dying. You can set the corpse run duration. Currently this value is baked into the tombstone when dying,  meaning that changing the value will only affect the tombstones generated after
+You can also modify the skill reduction modifier which is applied when dying, and set the corpse run duration. Currently this value is baked into the tombstone when dying,  meaning that changing the value will only affect the tombstones generated after
 
 Disabling the no skill drain effect is possible. Currently this doesn't remove the UI icon though, but functionally it works!
 
