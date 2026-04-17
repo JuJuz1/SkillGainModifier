@@ -8,6 +8,17 @@ using System.IO;
 using System.Reflection;
 using SkillType = Skills.SkillType;
 
+// A class to hold the current level and progress of the Skill
+class SkillData
+{
+    public float level;
+    public float progress;
+    public override string ToString()
+    {
+        return $"level: {level}, progress: {progress}";
+    }
+};
+
 namespace SkillGainModifier
 {
     [BepInPlugin(pluginGUID, pluginName, pluginVersion)]
@@ -22,7 +33,7 @@ namespace SkillGainModifier
         private readonly static ManualLogSource logger = BepInEx.Logging.Logger.CreateLogSource(pluginName);
 
         // To hold skill progress
-        private static Dictionary<SkillType, float> skillData = new Dictionary<SkillType, float>();
+        private static Dictionary<SkillType, SkillData> skillData = new Dictionary<SkillType, SkillData>();
 
         private static string configFileName = pluginGUID + ".cfg";
         private static string configFileFullPath = BepInEx.Paths.ConfigPath + Path.DirectorySeparatorChar + configFileName;
@@ -50,6 +61,8 @@ namespace SkillGainModifier
 
             noSkillDrainEnabled = Config.Bind<bool>("General", "No skill drain enabled", true, "Enable no skill drain. The default length for it is 10 minutes, and its too big of a hassle to modify to work correctly. So here is a feature to enable or disable it :)");
             corpseRunDuration = Config.Bind<float>("General", "Duration", 60.0f, "Corpse run duration. The default for it is 50 seconds, here we set a default of 60 seconds");
+            var das = new SkillData();
+            var b = das.progress;
 
             var all = SkillType.All;
             skillGainModifiers[all] = Config.Bind(
@@ -75,7 +88,7 @@ namespace SkillGainModifier
                 );
             }
 
-            skillReductionModifier = Config.Bind<float>("Skill reduction", "Modifier", 0.0f, "A multiplier for skill reduction. The default value of 0 means the skill level AND progress is not affected at all. Any value other than 0 resets skill progress! A value of 1 signals to use the game's default world modifiers");
+            skillReductionModifier = Config.Bind<float>("Skill reduction", "Modifier", 0.0f, "A multiplier for skill reduction. RECOMMENDED VALUES: 0-0.2, see later for explanation. The default value of 0 means the skill level AND progress is not affected at all. A value of 1 signals to use the game's default world modifiers. Any value other than 0 resets skill progress! The game does the following when calculating the new level: new level = modifier * current level. Using a value above one will always set the level 0!!! So be careful with too big modifiers. The code checks that the minimum level is capped to 0 for safety");
 
             Config.Save();
             Config.SaveOnConfigSet = true; // Re-enable saving on config changes
@@ -132,7 +145,7 @@ namespace SkillGainModifier
                 LogError($"There was an issue loading {configFileName}");
             }
 
-            LogInfo("Reloaded configuration!");
+            LogInfo("Reloaded configuration!\n");
         }
 
         // Logging wrappers for the BepInEx logging system
@@ -151,6 +164,14 @@ namespace SkillGainModifier
             if (loggingEnabled.Value)
             {
                 logger.LogDebug(message);
+            }
+        }
+
+        private static void LogWarning(string message)
+        {
+            if (loggingEnabled.Value)
+            {
+                logger.LogWarning(message);
             }
         }
 
@@ -189,7 +210,7 @@ namespace SkillGainModifier
                 }
                 else
                 {
-                    LogDebug($"Using overriden value {entry.Value}");
+                    LogDebug($"Using overriden value: {entry.Value}");
                     factor *= entry.Value;
                 }
 
@@ -236,8 +257,9 @@ namespace SkillGainModifier
                     LogInfo($"Saving skill progress...\n");
                     foreach (var kv in __instance.m_skillData)
                     {
-                        skillData.Add(kv.Key, kv.Value.m_accumulator);
-                        LogDebug($"Added {kv.Key}, {kv.Value.m_accumulator}");
+                        var data = new SkillData { level = kv.Value.m_level, progress = kv.Value.m_accumulator };
+                        skillData.Add(kv.Key, data);
+                        LogDebug($"Added {kv.Key}, {data}");
                     }
 
                     return;
@@ -250,10 +272,30 @@ namespace SkillGainModifier
             // Modify progress back to saved if skillReductionModifier is 0
             private static void Postfix(Skills __instance)
             {
-                LogDebug("Skill progress before applying saved:\n");
+                LogDebug("Skill progress before applying saved:");
+
+                bool gaveWarningAboutModifierBeingAboveOne = false;
+
                 foreach (var kv in __instance.m_skillData)
                 {
-                    LogDebug($"{kv.Key}: {kv.Value.m_accumulator}");
+                    float oldLevel = kv.Value.m_level;
+
+                    string correctedLevel = "";
+                    // Fix negative levels if used too big of a modifier
+                    if (kv.Value.m_level < 0)
+                    {
+                        if (!gaveWarningAboutModifierBeingAboveOne)
+                        {
+                            LogWarning($"Any modifier above one results in the level being 0! Current modifier {skillReductionModifier.Value}. Recommended values are 0-0.2!");
+                            gaveWarningAboutModifierBeingAboveOne = true;
+                        }
+
+                        LogWarning($"Skill {kv.Key} would have had a level of {oldLevel} if it wasn't corrected to 0!");
+                        kv.Value.m_level = 0;
+                        correctedLevel = $"Corrected level: {kv.Value.m_level}";
+                    }
+
+                    LogDebug($"{kv.Key}: level: {oldLevel} progress: {kv.Value.m_accumulator}. {correctedLevel}");
                 }
 
                 // If any data was saved
@@ -262,18 +304,19 @@ namespace SkillGainModifier
                     LogInfo($"Applying saved skill progress...\n");
                     foreach (var kv in __instance.m_skillData)
                     {
-                        float accumulated = 0.0f; // TryGetValue would return this nonetheless, but to be extra safe
-                        bool foundValueBySkill = skillData.TryGetValue(kv.Key, out accumulated);
+                        var data = new SkillData { level = 0.0f, progress = 0.0f }; // TryGetValue would return this nonetheless, but to be extra safe
+                        bool foundValueBySkill = skillData.TryGetValue(kv.Key, out data);
                         if (!foundValueBySkill)
                         {
                             LogError($"Couldn't find value by key {kv.Key}. Setting value to default (0.0f)");
                         }
                         else
                         {
-                            LogDebug($"Found {kv.Key}, setting value to {accumulated}");
+                            LogDebug($"Found {kv.Key}, setting data to {data}");
                         }
 
-                        __instance.m_skillData[kv.Key].m_accumulator = accumulated;
+                        __instance.m_skillData[kv.Key].m_level = data.level;
+                        __instance.m_skillData[kv.Key].m_accumulator = data.progress;
                     }
 
                     skillData.Clear();
@@ -291,6 +334,8 @@ namespace SkillGainModifier
             }
         }
 
+        /// No skill drain ///
+
         // No skill drain status effect was too much of a hassle to get working
         // The system is really not made for easy modifying at runtime
 
@@ -305,11 +350,13 @@ namespace SkillGainModifier
         {
             private static void Postfix(Player __instance)
             {
-                if (!noSkillDrainEnabled.Value)
+                if (!noSkillDrainEnabled.Value && __instance.m_timeSinceDeath <= 1000.0f) // Safe margin
                 {
                     // Normally: m_timeSinceDeath += dt;
-                    // Here we just HardDeath() to return true instantly
-                    __instance.m_timeSinceDeath = 999999f; // Same as the default in the game
+                    // Here we just make HardDeath() return true instantly
+                    LogDebug("timeSinceDeath set to 999999.0f");
+                    __instance.m_timeSinceDeath = 999999.0f; // Same as the default in the game
+                    // This doesn't remove the icon and the timer from the UI though... but works functionally!
                 }
             }
         }
