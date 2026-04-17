@@ -429,3 +429,6 @@ FodyWeavers.xsd
 
 # Referenced DLLs
 SkillGainModifier/Libraries
+
+# Thunderstore releases
+Releases
