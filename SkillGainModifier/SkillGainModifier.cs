@@ -51,7 +51,12 @@ namespace SkillGainModifier
 
         // Config reloading timers
         private DateTime lastReloadTime;
-        private const long RELOAD_DELAY = 10_000_000; // One second in ticks
+        private const long ONE_SECOND_IN_TICKS = 10_000_000;
+        private const long RELOAD_DELAY = ONE_SECOND_IN_TICKS;
+
+        // Warnings about reduction modifier
+        private static DateTime lastReductionWarningTime;
+        private const long WARNING_INTERVAL = ONE_SECOND_IN_TICKS * 10;
 
         public void Awake()
         {
@@ -94,6 +99,8 @@ namespace SkillGainModifier
             Config.SaveOnConfigSet = true; // Re-enable saving on config changes
 
             SetupWatcher();
+
+            WarnAboutReductionModifier(atStartup: true);
 
             Assembly assembly = Assembly.GetExecutingAssembly();
             harmonyInstance.PatchAll(assembly);
@@ -180,6 +187,29 @@ namespace SkillGainModifier
             if (loggingEnabled.Value)
             {
                 logger.LogError(message);
+            }
+        }
+
+        private static void WarnAboutReductionModifier(bool atStartup = false)
+        {
+            if (skillReductionModifier.Value > 1)
+            {
+                if (atStartup)
+                {
+                    LogWarning($"Any modifier above one results in the level being 0! Current modifier {skillReductionModifier.Value}. Recommended values are 0-0.2! The mod will warn you about this every {WARNING_INTERVAL / ONE_SECOND_IN_TICKS}s");
+                    return;
+                }
+
+                var now = DateTime.Now;
+                var time = now.Ticks - lastReductionWarningTime.Ticks;
+
+                if (time < WARNING_INTERVAL) {
+                    return;
+                }
+
+                lastReductionWarningTime = now;
+
+                LogWarning($"Any modifier above one results in the level being 0! Current modifier {skillReductionModifier.Value}. Recommended values are 0-0.2!");
             }
         }
 
@@ -286,7 +316,7 @@ namespace SkillGainModifier
                     {
                         if (!gaveWarningAboutModifierBeingAboveOne)
                         {
-                            LogWarning($"Any modifier above one results in the level being 0! Current modifier {skillReductionModifier.Value}. Recommended values are 0-0.2!");
+                            WarnAboutReductionModifier();
                             gaveWarningAboutModifierBeingAboveOne = true;
                         }
 
@@ -350,6 +380,9 @@ namespace SkillGainModifier
         {
             private static void Postfix(Player __instance)
             {
+                // This is run every FixedUpdate so we can call this here quite handily
+                WarnAboutReductionModifier();
+
                 if (!noSkillDrainEnabled.Value && __instance.m_timeSinceDeath <= 1000.0f) // Safe margin
                 {
                     // Normally: m_timeSinceDeath += dt;
