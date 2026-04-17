@@ -26,7 +26,7 @@ namespace SkillGainModifier
     {
         public const string pluginGUID = "jujuz1.mods.skillgainmodifier";
         public const string pluginName = "SkillGainModifier";
-        public const string pluginVersion = "0.1.0";
+        public const string pluginVersion = "0.1.1";
 
         private readonly Harmony harmonyInstance = new Harmony(pluginGUID);
 
